@@ -8,7 +8,7 @@
    +------------------------------------------------------------------------+ */
 #pragma once
 
-#include <mrpt/bayes/CKalmanFilterCapable.h>
+#include <ekf_slam/CKalmanFilterCapable.h>
 #include <mrpt/config/CConfigFileBase.h>
 #include <mrpt/config/CLoadableOptions.h>
 #include <mrpt/containers/bimap.h>

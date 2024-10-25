@@ -3,7 +3,7 @@
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "mrpt_ekf_slam_2d");
+  ros::init(argc, argv, "ekf_slam");
   ros::NodeHandle n;
   ros::Rate r(100);
   EKFslamWrapper slam;
