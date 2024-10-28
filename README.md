@@ -83,6 +83,26 @@ See `CRangeBearingKFSLAM2D.h` for source code.
 
 - ACT_SIZE: The dimension of each "action" u_k: $[Ax, Ay, Ayaw]$. 
 
+### 3.2 Transition model
+
+- Transition model: 
+
+$$g(\mu_{t-1}, u_t) = \begin{bmatrix} x_{t-1} \\  y_{t-1} \\ yaw_{t-1} \end{bmatrix} + \begin{bmatrix} Ax \\ Ay \\ Ayaw \end{bmatrix}$$
+
+
+- Transition Jacobian:
+
+$$G_t = \begin{bmatrix} 1 & 0 & -Ax \sin(yaw_{t-1}) - Ay \cos(yaw_{t-1}) \\ 0 & 1 & Ax \cos(yaw_{t-1}) - Ay \sin(yaw_{t-1}) \\ 0 & 0 & 1 \end{bmatrix}$$
+
+- Transition noise:
+
+$$R_t = \begin{bmatrix} \sigma_{Ax}^2 & 0 & 0 \\ 0 & \sigma_{Ay}^2 & 0 \\ 0 & 0 & \sigma_{Ayaw}^2 \end{bmatrix}$$
+
+### 3.3 Observation model
+
+**TODO**: Write up the specs for the observation model.
+
+
 ## 4. EKF SLAM Package
 
 See `ekf_slam.h` and `ekf_slam_wrapper.h` for source code. 
