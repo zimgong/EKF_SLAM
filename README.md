@@ -1,6 +1,6 @@
-# Formula Student SLAM System
+# EKF SLAM for MR24 Driverless
 
-A complete SLAM (Simultaneous Localization and Mapping) system designed for Formula Student driverless racing, implemented in Python for ROS Noetic.
+A complete SLAM (Simultaneous Localization and Mapping) system designed for MR24 Driverless, implemented in Python for ROS Noetic.
 
 ## Features
 
@@ -57,12 +57,12 @@ A complete SLAM (Simultaneous Localization and Mapping) system designed for Form
 1. **Clone the repository into your catkin workspace:**
    ```bash
    cd ~/catkin_ws/src
-   git clone <repository_url> fs_slam
+   git clone <repository_url> ekf_slam
    ```
 
 2. **Install Python dependencies:**
    ```bash
-   cd fs_slam
+   cd ekf_slam
    pip install -r requirements.txt
    ```
 
@@ -79,14 +79,14 @@ A complete SLAM (Simultaneous Localization and Mapping) system designed for Form
 
 Launch the complete SLAM system:
 ```bash
-roslaunch fs_slam fs_slam.launch
+roslaunch mapping ekf_slam_2d_py.launch
 ```
 
 ### Custom Configuration
 
 Launch with custom parameters:
 ```bash
-roslaunch fs_slam fs_slam.launch \
+roslaunch mapping ekf_slam_2d_py.launch \
     pointcloud_topic:=/your_lidar_topic \
     odom_topic:=/your_odom_topic \
     enable_visualization:=true
