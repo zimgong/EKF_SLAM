@@ -1,0 +1,80 @@
+# Formula Student SLAM Configuration Parameters
+
+# Frame IDs
+robot_frame: "base_link"
+map_frame: "map"
+odom_frame: "odom"
+sensor_frame: "velodyne"
+
+# EKF SLAM Parameters
+ekf_slam:
+  # Process noise (motion model uncertainty)
+  process_noise_std: 0.1
+  
+  # Measurement noise (sensor uncertainty)
+  measurement_noise_std: 0.5
+  
+  # Initial pose uncertainty
+  initial_pose_std: 0.1
+
+# Data Association Parameters
+data_association:
+  # Maximum Euclidean distance for association consideration
+  max_association_distance: 2.0
+  
+  # Chi-squared threshold for Mahalanobis distance (95% confidence)
+  mahalanobis_threshold: 9.21
+  
+  # Minimum number of measurements to consider association
+  min_measurements_for_association: 1
+
+# Perception Parameters
+perception:
+  # Point cloud filtering
+  max_range: 20.0
+  min_range: 0.5
+  max_height: 0.5
+  min_height: -0.5
+  
+  # Clustering parameters
+  min_cluster_size: 5
+  max_cluster_size: 50
+  cluster_distance_threshold: 0.5
+  
+  # Landmark validation
+  min_landmark_observations: 3
+  landmark_stability_threshold: 0.2
+
+# System Parameters
+system:
+  # Update rates
+  slam_update_rate: 10.0  # Hz
+  publish_rate: 10.0      # Hz
+  
+  # Visualization
+  enable_visualization: true
+  marker_lifetime: 1.0    # seconds
+  
+  # Logging
+  log_level: "INFO"       # DEBUG, INFO, WARN, ERROR
+  enable_statistics: true
+
+# Topic Names
+topics:
+  pointcloud: "/velodyne_points"
+  odometry: "/odom"
+  robot_pose: "/slam/robot_pose"
+  landmarks: "/slam/landmarks"
+  map: "/slam/map"
+  status: "/slam/status"
+
+# Racing-specific Parameters
+racing:
+  # Track characteristics
+  typical_cone_height: 0.5      # meters
+  cone_detection_range: 15.0    # meters
+  track_width_estimate: 4.0     # meters
+  
+  # Performance tuning
+  high_speed_mode: false        # Adjust parameters for high-speed operation
+  aggressive_association: false # More lenient association for fast movement 
