@@ -57,6 +57,10 @@ class Pose2D:
         new_yaw = self._wrap_to_pi(self.yaw + other.yaw)
         return Pose2D(new_x, new_y, new_yaw)
 
+    def _wrap_to_pi(self, angle: float) -> float:
+        """Wrap angle to [-π, π] range."""
+        return ((angle + np.pi) % (2 * np.pi)) - np.pi
+
 
 @dataclass
 class PosePDFGaussian:
@@ -109,7 +113,6 @@ class DataAssociationInfo:
         self.newly_inserted_landmarks.clear()
 
 
-@staticmethod
 def get_inverse_map(map: Dict[int, int]) -> Dict[int, int]:
     return {v: k for k, v in map.items()}
 
@@ -153,15 +156,15 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         self.SFs = []
 
         # Init KF state
-        self.xkk = np.zeros(3)  # State: 3D pose (x, y, phi)
-
+        self.state_vector = np.zeros(3)  # State: 3D pose (x, y, phi)
         # Initial cov:
-        self.pkk = np.zeros((3, 3))
+        self.covariance_matrix = np.eye(3) * 0.1  # Small initial uncertainty
 
     def get_current_robot_pose(self) -> PosePDFGaussian:
+        pose_mean = Pose2D(self.state_vector[0], self.state_vector[1], self.state_vector[2])
         return PosePDFGaussian(
-            mean=Pose2D(self.xkk[:3].copy()),
-            cov=self.pkk[:3, :3].copy(),
+            mean=pose_mean,
+            cov=self.covariance_matrix[:3, :3].copy(),
         )
 
     def get_current_state(self) -> Tuple[Pose2D, np.ndarray, Dict[int, int], np.ndarray, np.ndarray]:
@@ -169,19 +172,19 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         robot_pose = self.get_current_robot_pose()
 
         # Landmarks: 
-        n_LMs = (len(self.xkk) - 3) // 2
+        n_LMs = (len(self.state_vector) - 3) // 2
         landmarks_positions = np.zeros((n_LMs, 2))
         for i in range(n_LMs):
-            landmarks_positions[i] = self.xkk[3 + i * 2 : 3 + i * 2 + 2]
+            landmarks_positions[i] = self.state_vector[3 + i * 2 : 3 + i * 2 + 2]
 
         # IDs:
         landmark_IDs = get_inverse_map(self.IDs)
 
         # Full state:
-        full_state = self.xkk.copy()
+        full_state = self.state_vector.copy()
 
         # Full cov:
-        full_covariance = self.pkk.copy()
+        full_covariance = self.covariance_matrix.copy()
 
         return robot_pose, landmarks_positions, landmark_IDs, full_state, full_covariance
 
@@ -196,7 +199,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         # Add to SFs sequence
         if self.options.create_simplemap:
             p = self.get_current_robot_pose()
-            self.SFs.append((p.copy(), SF))
+            self.SFs.append((p.mean, SF))
 
     def on_get_action(self) -> np.ndarray:
         """
@@ -218,7 +221,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         # landmarks in the map, 
         # otherwise, we are imposing a lower bound to the best uncertainty from now 
         # on:
-        if len(self.xkk) == self.vehicle_size:
+        if len(self.state_vector) == self.vehicle_size:
             return xv, True  # Skip prediction
         
         robot_pose = Pose2D(xv[0], xv[1], xv[2])
@@ -236,7 +239,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
             return np.eye(3)
 
         # Get current robot orientation
-        yaw = self.xkk[2]
+        yaw = self.state_vector[2]
 
         # Odometry increment
         dx = self.action.dx
@@ -268,7 +271,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
             Q = self.action.covariance.copy()
 
             # Rotate covariance by current robot orientation
-            yaw = self.xkk[2]
+            yaw = self.state_vector[2]
             cos_yaw = np.cos(yaw)
             sin_yaw = np.sin(yaw)
 
@@ -298,7 +301,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
             return []
 
         # Get robot pose and sensor pose
-        robot_pose = self.xkk[:3]  # [x, y, yaw]
+        robot_pose = self.state_vector[:3]  # [x, y, yaw]
         sensor_pose_rel = self.SF.sensor_pose
 
         if sensor_pose_rel is None:
@@ -339,7 +342,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
             return Hx, Hy
 
         # Get poses
-        robot_pose = self.xkk[:3]
+        robot_pose = self.state_vector[:3]
         sensor_pose_rel = self.SF.sensor_pose
         if sensor_pose_rel is None:
             sensor_pose_rel = np.zeros(6)
@@ -409,82 +412,34 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
 
     def on_get_observations_and_data_association(
         self,
-        S: np.ndarray,
-        lm_indices_in_S: List[int],
+        all_predictions: List[np.ndarray],
+        innovation_cov: np.ndarray,
+        landmark_indices: List[int],
+        obs_noise: np.ndarray,
     ) -> Tuple[List[np.ndarray], List[int]]:
         """
         This is called between the KF prediction step and the update step, and the
         application must return the observations and, when applicable, the data
         association between these observations and the current map.
-
-        Inputs:
-            S: The full covariance matrix of the observation predictions (i.e.
-            the "innovation covariance matrix"). This is a M·O x M·O matrix with M=length
-            of "in_lm_indices_in_S".
-            lm_indices_in_S: The indices of the map landmarks that can be found in the matrix S.
-
-        Returns:
-            z: N vectors, each for one "observation" of length OBS_SIZE, N
-            being the number of "observations": how many observed landmarks for a map, or
-            just one if not applicable. 
-            data_association: An empty vector or, where applicable, a vector
-            where the i'th element corresponds to the position of the observation in the
-            i'th row of z within the system state vector, or -1 if it is a new map element and
-            we want to insert it at the end of this KF iteration.
-
-        This method will be called just once for each complete KF iteration.
-        NOTE: It is assumed that the observations are independent, i.e. there are NO
-        cross-covariances between them.
         """
         if self.SF is None:
             return [], []
 
-        n = len(self.SF.observations)
-        # Z: Observations
-        Z = np.zeros((n, 2))
-        # Data association:
-        data_association = np.ones(n) * -1
-        obs_idxs_needing_data_assoc = []
+        observations = []
+        data_association = []
 
-        # For each observed LM:
+        # Convert observations to numpy arrays
+        for obs in self.SF.observations:
+            observations.append(np.array([obs.range, obs.yaw]))
+
+        # Simple data association based on landmark IDs
         for i, obs in enumerate(self.SF.observations):
-            # Fill one row in Z:
-            Z[i] = np.array([obs.range, obs.yaw])
-
-        i = 0
-        it_obs = 0
-        it_da = 0
-        while it_obs < len(self.SF.observations):
-            # Check if landmark has known ID
-            if obs.landmark_id < 0:
-                obs_idxs_needing_data_assoc.append(i)
+            if obs.landmark_id >= 0 and obs.landmark_id in self.IDs:
+                # Known landmark
+                data_association.append(self.IDs[obs.landmark_id])
             else:
-                if self.SF.observations[it_obs].landmark_id in self.IDs:
-                    it_da = self.IDs[self.SF.observations[it_obs].landmark_id]
-            i += 1
-            it_obs += 1
-            it_da += 1
-
-        # Only for observation indices in "obs_idxs_needing_data_assoc"
-        if not obs_idxs_needing_data_assoc:
-            # We don't need to do DA:
-            self.last_data_association.clear()
-
-            # Save them for the case the external user wants to access them:
-            for i, da in enumerate(data_association):
-                if da >= 0:
-                    self.last_data_association.results.associations[i] = da
-        else:
-            associations = self._perform_data_association(
-                [self.SF.observations[i] for i in obs_idxs_needing_data_assoc],
-                Z
-            )
-
-            # Update data association results
-            for i, (obs_idx, lm_idx) in enumerate(associations.items()):
-                if obs_idx < len(obs_idxs_needing_data_assoc):
-                    global_obs_idx = obs_idxs_needing_data_assoc[obs_idx]
-                    data_association[global_obs_idx] = lm_idx
+                # New landmark
+                data_association.append(-1)
 
         # Store data association info
         self.last_data_association.clear()
@@ -511,7 +466,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
             raise ValueError("No current sensor frame available")
 
         # Get sensor pose
-        robot_pose = self.xkk[:3]
+        robot_pose = self.state_vector[:3]
         sensor_pose_rel = self.SF.sensor_pose
         if sensor_pose_rel is None:
             sensor_pose_rel = np.zeros(6)
@@ -571,14 +526,18 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         if obs.landmark_id >= 0:
             # Sensor provided landmark ID
             self.IDs[obs.landmark_id] = feature_index
+        else:
+            # Generate new ID
+            new_id = len(self.IDs)
+            self.IDs[new_id] = feature_index
 
         # Record for statistics
         self.last_data_association.newly_inserted_landmarks[obs_index] = feature_index
 
-    def on_normalize_xkk(self):
+    def on_normalize_state_vector(self):
         """Normalize angles in the state vector."""
         # Normalize robot yaw angle
-        self.xkk[2] = self._wrap_to_pi(self.xkk[2])
+        self.state_vector[2] = self._wrap_to_pi(self.state_vector[2])
 
     def on_subtract_observation_vectors(
         self, a: np.ndarray, b: np.ndarray
@@ -602,7 +561,7 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         max_bearing = np.pi  # full 360 degree FOV
 
         # Get current robot uncertainty for conservative prediction
-        robot_cov = self.pkk[:3, :3]
+        robot_cov = self.covariance_matrix[:3, :3]
         max_pos_uncertainty = 4 * np.sqrt(np.trace(robot_cov[:2, :2]))
         max_yaw_uncertainty = 4 * np.sqrt(robot_cov[2, 2])
 
@@ -660,72 +619,6 @@ class RangeBearingKFSLAM2D(KalmanFilterCapable):
         result_yaw = self._wrap_to_pi(yaw1 + yaw2)
 
         return np.array([result_x, result_y, result_yaw])
-
-    def _perform_data_association(
-        self,
-        unknown_observations: List[np.ndarray],
-        predictions: List[np.ndarray],
-        innovation_cov: np.ndarray,
-        landmark_indices: List[int],
-        obs_noise: np.ndarray,
-    ) -> Dict[int, int]:
-        """
-        Perform data association using nearest neighbor with Mahalanobis distance.
-
-        Returns:
-        --------
-        Dict[int, int]
-            Mapping from observation index to landmark index
-        """
-        associations = {}
-
-        if not unknown_observations or not predictions:
-            return associations
-
-        # Simple nearest neighbor data association
-        for obs_idx, obs in enumerate(unknown_observations):
-            best_distance = float("inf")
-            best_landmark = -1
-
-            for pred_idx, pred in enumerate(predictions):
-                if pred_idx >= len(landmark_indices):
-                    continue
-
-                landmark_idx = landmark_indices[pred_idx]
-
-                # Compute innovation
-                innovation = self.on_subtract_observation_vectors(obs, pred)
-
-                # Get innovation covariance for this prediction
-                start_idx = pred_idx * self.observation_size
-                end_idx = start_idx + self.observation_size
-
-                if end_idx <= innovation_cov.shape[0]:
-                    pred_cov = innovation_cov[start_idx:end_idx, start_idx:end_idx]
-
-                    # Mahalanobis distance
-                    try:
-                        distance = float(
-                            innovation.T @ np.linalg.inv(pred_cov) @ innovation
-                        )
-
-                        # Chi-squared test
-                        if (
-                            distance < best_distance and distance < 9.21
-                        ):  # 99% confidence for 2 DOF
-                            best_distance = distance
-                            best_landmark = landmark_idx
-                    except np.linalg.LinAlgError:
-                        # Singular covariance, use Euclidean distance
-                        distance = float(np.linalg.norm(innovation))
-                        if distance < best_distance:
-                            best_distance = distance
-                            best_landmark = landmark_idx
-
-            if best_landmark >= 0:
-                associations[obs_idx] = best_landmark
-
-        return associations
 
     def load_options_from_config(self, config: Dict[str, Any]):
         """Load configuration options from a dictionary."""

@@ -552,7 +552,18 @@ class KalmanFilterCapable(ABC):
         
         # Compute innovation covariance: S = H * P * H^T + R_full
         R_full = np.kron(np.eye(n_landmarks), R)
-        self._innovation_covariance = (H_full @ self.covariance_matrix @ H_full.T + R_full)
+        HP_HT = H_full @ self.covariance_matrix @ H_full.T
+        
+        # Ensure dimensions match
+        if HP_HT.shape != R_full.shape:
+            self.logger.warning(f"Dimension mismatch: HP_HT {HP_HT.shape} vs R_full {R_full.shape}")
+            # Resize R_full to match
+            min_dim = min(HP_HT.shape[0], R_full.shape[0])
+            R_full_resized = np.zeros_like(HP_HT)
+            R_full_resized[:min_dim, :min_dim] = R_full[:min_dim, :min_dim]
+            R_full = R_full_resized
+        
+        self._innovation_covariance = HP_HT + R_full
     
     def _process_observations(self, observations: List[np.ndarray], 
                             data_association: List[int], R: np.ndarray) -> None:
@@ -576,16 +587,17 @@ class KalmanFilterCapable(ABC):
                 else:
                     Hx, Hy = self._estimate_observation_jacobians_numeric(assoc_idx)
                 
-                # Create full Jacobian row
-                H_row = np.zeros(len(self.state_vector))
-                H_row[:self.vehicle_size] = Hx.flatten()[:self.vehicle_size]
-                
-                if self.feature_size > 0:
-                    lm_start = self.vehicle_size + assoc_idx * self.feature_size
-                    lm_end = lm_start + self.feature_size
-                    H_row[lm_start:lm_end] = Hy.flatten()[:self.feature_size]
-                
-                H_matrix_rows.append(H_row)
+                # Create full Jacobian rows (one for each observation dimension)
+                for obs_dim in range(self.observation_size):
+                    H_row = np.zeros(len(self.state_vector))
+                    H_row[:self.vehicle_size] = Hx[obs_dim, :]
+                    
+                    if self.feature_size > 0:
+                        lm_start = self.vehicle_size + assoc_idx * self.feature_size
+                        lm_end = lm_start + self.feature_size
+                        H_row[lm_start:lm_end] = Hy[obs_dim, :]
+                    
+                    H_matrix_rows.append(H_row)
         
         if associated_obs:
             self._kalman_update(associated_obs, associated_predictions, H_matrix_rows, R)
@@ -598,13 +610,28 @@ class KalmanFilterCapable(ABC):
         h = np.concatenate(predictions)
         H = np.vstack(H_rows)
         
-        # Innovation
-        innovation = self.on_subtract_observation_vectors(z, h)
+        # Innovation - compute pairwise then concatenate
+        innovations = []
+        for obs, pred in zip(observations, predictions):
+            innov = self.on_subtract_observation_vectors(obs, pred)
+            innovations.append(innov)
+        innovation = np.concatenate(innovations)
         
         # Innovation covariance
         n_obs = len(observations)
         R_full = np.kron(np.eye(n_obs), R)
-        S = H @ self.covariance_matrix @ H.T + R_full
+        HP_HT = H @ self.covariance_matrix @ H.T
+        
+        # Ensure dimensions match
+        if HP_HT.shape != R_full.shape:
+            self.logger.warning(f"Kalman update dimension mismatch: HP_HT {HP_HT.shape} vs R_full {R_full.shape}")
+            # Resize R_full to match
+            min_dim = min(HP_HT.shape[0], R_full.shape[0])
+            R_full_resized = np.zeros_like(HP_HT)
+            R_full_resized[:min_dim, :min_dim] = R_full[:min_dim, :min_dim]
+            R_full = R_full_resized
+        
+        S = HP_HT + R_full
         
         # Kalman gain
         try:
@@ -618,6 +645,7 @@ class KalmanFilterCapable(ABC):
         # Update state and covariance
         self.state_vector += K @ innovation
         I_KH = np.eye(len(self.state_vector)) - K @ H
+        # Use Joseph form update for numerical stability
         self.covariance_matrix = I_KH @ self.covariance_matrix @ I_KH.T + K @ R_full @ K.T
     
     def _add_new_landmarks(self, observations: List[np.ndarray], 

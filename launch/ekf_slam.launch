@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- EKF SLAM Node -->
+    <node name="ekf_slam_node" pkg="slam_project" type="ekf_slam_node.py" output="screen" respawn="true">
+        <!-- Frame IDs -->
+        <param name="global_frame_id" value="map" />
+        <param name="odom_frame_id" value="odom" />
+        <param name="base_frame_id" value="base_link" />
+        <param name="lidar_frame_id" value="lidar_link" />
+        
+        <!-- EKF SLAM Parameters -->
+        <rosparam param="process_noise_std">[0.02, 0.02, 0.01]</rosparam>  <!-- [x, y, yaw] std dev -->
+        <param name="sensor_range_std" value="0.05" />  <!-- 5cm range noise -->
+        <param name="sensor_bearing_std" value="0.02" />  <!-- ~1.1 degree bearing noise -->
+        
+        <!-- Data Association Parameters -->
+        <param name="max_association_distance" value="2.0" />  <!-- Maximum distance for association -->
+        <param name="mahalanobis_threshold" value="9.21" />  <!-- Chi-squared 99% confidence for 2 DOF -->
+        
+        <!-- Perception Parameters -->
+        <param name="min_cluster_size" value="5" />  <!-- Minimum points per cluster -->
+        <param name="max_cluster_size" value="50" />  <!-- Maximum points per cluster -->
+        <param name="cluster_distance_threshold" value="0.5" />  <!-- Distance threshold for clustering -->
+        <param name="max_sensor_range" value="20.0" />  <!-- Maximum LiDAR range -->
+        
+        <!-- Topic remappings -->
+        <remap from="/odom" to="/odometry/filtered" />
+        <remap from="/lidar/clustered" to="/velodyne_points" />
+    </node>
+    
+    <!-- Static transform publishers (example transforms - adjust as needed) -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_lidar" 
+          args="0 0 0.5 0 0 0 base_link lidar_link" />
+    
+    <!-- Robot State Publisher (if needed) -->
+    <!-- 
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+        <param name="robot_description" command="$(find xacro)/xacro $(find your_robot_description)/urdf/robot.urdf.xacro" />
+    </node>
+    -->
+    
+    <!-- RViz visualization -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find slam_project)/config/ekf_slam.rviz" if="$(arg rviz)" />
+    <arg name="rviz" default="true" />
+    
+</launch> 
